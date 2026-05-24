@@ -124,7 +124,13 @@ router.get("/google/callback", async (req, res) => {
 
     console.log("✓ Gmail authenticated successfully");
 
-    // Redirect back to dashboard with success and auto-trigger pipeline
+    // Trigger pipeline run server-side immediately (don't rely on browser fetch)
+    setTimeout(() => {
+      fetch('http://localhost:3001/api/pipeline/run', { method: 'POST' })
+        .catch((err) => console.error('Auto pipeline trigger failed:', err));
+    }, 1000);
+
+    // Redirect back to dashboard
     res.send(`
       <html>
         <body style="font-family: system-ui; padding: 40px; text-align: center;">
@@ -132,11 +138,6 @@ router.get("/google/callback", async (req, res) => {
           <p>Your inbox is now linked to Inbox Intelligence.</p>
           <p>Starting inbox scan... Redirecting to dashboard...</p>
           <script>
-            // Trigger pipeline run after a short delay to let token settle
-            setTimeout(() => {
-              fetch('http://localhost:3001/api/pipeline/run', { method: 'POST' })
-                .catch(() => {});
-            }, 3000);
             setTimeout(() => window.location.href = 'http://localhost:5173', 2000);
           </script>
         </body>

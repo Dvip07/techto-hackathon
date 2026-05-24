@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActionButton } from '../components/ActionButton';
 import type { PaymentPromiseResult, CommitmentTrackingResult } from '../../types/outputs';
-import type { RefundRecord } from '../../types/models';
+import type { RefundRecord, FinancialCommitment } from '../../types/models';
 
 /**
  * CommitmentsTab — Displays payment promises, pending refunds, and financial
@@ -84,19 +84,63 @@ interface CommitmentsTabProps {
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export function CommitmentsTab({
-  paymentPromises,
-  pendingRefunds,
-  financialCommitments,
+  paymentPromises: paymentPromisesProp,
+  pendingRefunds: pendingRefundsProp,
+  financialCommitments: financialCommitmentsProp,
   onFollowUp,
   onMarkRefundReceived,
 }: CommitmentsTabProps) {
+  const [fetchedRefunds, setFetchedRefunds] = useState<{ pendingRefunds: RefundRecord[]; overdueRefunds: RefundRecord[] } | undefined>(undefined);
+  const [fetchedCommitments, setFetchedCommitments] = useState<CommitmentTrackingResult | undefined>(undefined);
+
+  const API_URL = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL)
+    || 'http://localhost:3001';
+
+  useEffect(() => {
+    Promise.all([
+      fetch(`${API_URL}/api/refunds/pending`).then((r) => r.json()),
+      fetch(`${API_URL}/api/refunds/overdue`).then((r) => r.json()),
+      fetch(`${API_URL}/api/commitments`).then((r) => r.json()),
+    ])
+      .then(([pending, overdue, commitments]) => {
+        setFetchedRefunds({ pendingRefunds: pending, overdueRefunds: overdue });
+        // Build CommitmentTrackingResult from the open/overdue structure
+        const open: FinancialCommitment[] = commitments.open ?? [];
+        const overdueCommitments: FinancialCommitment[] = commitments.overdue ?? [];
+        const inbound = open.filter((c: FinancialCommitment) => c.type === 'inbound');
+        const outbound = open.filter((c: FinancialCommitment) => c.type === 'outbound');
+        const allOpen = [...open, ...overdueCommitments].sort((a, b) => (b.financialValue ?? 0) - (a.financialValue ?? 0));
+        setFetchedCommitments({
+          inbound,
+          outbound,
+          overdue: overdueCommitments,
+          openRankedByValue: allOpen,
+          refundCommitments: allOpen.filter((c: FinancialCommitment) => c.subtype === 'refund_promise'),
+          paymentPromiseCommitments: allOpen.filter((c: FinancialCommitment) => c.subtype === 'payment_promise'),
+          totals: {
+            totalInbound: inbound.length,
+            totalOutbound: outbound.length,
+            totalOpen: open.length,
+            totalOverdue: overdueCommitments.length,
+            totalInboundValue: inbound.reduce((s: number, c: FinancialCommitment) => s + (c.financialValue ?? 0), 0),
+            totalOutboundValue: outbound.reduce((s: number, c: FinancialCommitment) => s + (c.financialValue ?? 0), 0),
+            totalOverdueValue: overdueCommitments.reduce((s: number, c: FinancialCommitment) => s + (c.financialValue ?? 0), 0),
+          },
+        });
+      })
+      .catch(() => {});
+  }, [API_URL]);
+
+  const pendingRefunds = pendingRefundsProp ?? fetchedRefunds;
+  const financialCommitments = financialCommitmentsProp ?? fetchedCommitments;
+
   return (
     <div className="space-y-8">
       <h2 className="text-xl font-semibold text-gray-900">Commitments — Promises & Refunds</h2>
 
       {/* Payment Promises Section */}
       <PaymentPromisesSection
-        data={paymentPromises}
+        data={paymentPromisesProp}
         onFollowUp={onFollowUp}
       />
 

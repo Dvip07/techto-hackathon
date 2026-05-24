@@ -211,7 +211,62 @@ interface ObligationsTabProps {
   error?: string | null;
 }
 
-export function ObligationsTab({ data, loading = false, error = null }: ObligationsTabProps) {
+export function ObligationsTab({ data: dataProp, loading: loadingProp = false, error: errorProp = null }: ObligationsTabProps) {
+  const [fetchedData, setFetchedData] = useState<ObligationWatchResult | null>(null);
+  const [fetching, setFetching] = useState(!dataProp);
+
+  const API_URL = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL)
+    || 'http://localhost:3001';
+
+  useEffect(() => {
+    if (dataProp) return;
+    setFetching(true);
+    fetch(`${API_URL}/api/obligations`)
+      .then((r) => r.json())
+      .then((obligations: FinancialObligation[]) => {
+        // Build ObligationWatchResult from raw obligations
+        const totalExposure = obligations.reduce((sum, o) => sum + o.financialExposure, 0);
+        const allDeadlines: ObligationDeadline[] = obligations.flatMap((o) => o.keyDates);
+        const totalRiskFlags = obligations.reduce((sum, o) => sum + o.riskFlags.length, 0);
+        const withPenalties = obligations.filter((o) => o.penaltyClauses.length > 0).length;
+
+        // Build risk items from obligations
+        const riskItems = obligations.flatMap((o) =>
+          o.riskFlags.map((flag: any) => ({
+            obligationId: o.id,
+            contractName: o.contractName,
+            flag,
+            description: `${flag} detected`,
+            financialImpact: o.financialExposure,
+          }))
+        );
+        const highRisk = obligations.filter((o) =>
+          o.riskFlags.includes('missed_notice_window') || o.riskFlags.includes('high_financial_exposure')
+        );
+
+        setFetchedData({
+          obligations,
+          riskFlags: riskItems,
+          deadlines: allDeadlines,
+          totalFinancialExposure: totalExposure,
+          highRiskObligations: highRisk,
+          summary: {
+            totalObligations: obligations.length,
+            totalRiskFlags: totalRiskFlags,
+            obligationsWithAutoRenewal: obligations.filter((o) => o.autoRenews).length,
+            obligationsWithPenalties: withPenalties,
+            obligationsWithMissedNotice: obligations.filter((o) => o.riskFlags.includes('missed_notice_window')).length,
+            upcomingDeadlineCount: allDeadlines.length,
+          },
+        });
+      })
+      .catch(() => {})
+      .finally(() => setFetching(false));
+  }, [API_URL, dataProp]);
+
+  const loading = loadingProp || fetching;
+  const error = errorProp;
+  const data = dataProp ?? fetchedData;
   if (loading) {
     return (
       <div className="space-y-4 animate-pulse">

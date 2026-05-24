@@ -313,12 +313,39 @@ export interface SubscriptionsTabProps {
 }
 
 export function SubscriptionsTab({
-  overview,
+  overview: overviewProp,
   usageScores,
-  activeTrials,
-  zombieSubscriptions,
-  loading = false,
+  activeTrials: activeTrialsProp,
+  zombieSubscriptions: zombiesProp,
+  loading: loadingProp = false,
 }: SubscriptionsTabProps) {
+  const [fetchedSubscriptions, setFetchedSubscriptions] = useState<SubscriptionRecord[]>([]);
+  const [fetchedTrials, setFetchedTrials] = useState<TrialRecord[]>([]);
+  const [fetchedZombies, setFetchedZombies] = useState<SubscriptionRecord[]>([]);
+  const [fetching, setFetching] = useState(!overviewProp);
+
+  const API_URL = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL)
+    || 'http://localhost:3001';
+
+  useEffect(() => {
+    if (overviewProp) return; // skip fetch if data provided via props
+    setFetching(true);
+    Promise.all([
+      fetch(`${API_URL}/api/subscriptions`).then((r) => r.json()),
+      fetch(`${API_URL}/api/trials`).then((r) => r.json()),
+      fetch(`${API_URL}/api/subscriptions/zombies`).then((r) => r.json()),
+    ])
+      .then(([subs, trials, zombies]) => {
+        setFetchedSubscriptions(subs);
+        setFetchedTrials(trials);
+        setFetchedZombies(zombies);
+      })
+      .catch(() => {})
+      .finally(() => setFetching(false));
+  }, [API_URL, overviewProp]);
+
+  const loading = loadingProp || fetching;
+
   if (loading) {
     return (
       <div className="space-y-4 animate-pulse">
@@ -333,10 +360,10 @@ export function SubscriptionsTab({
     );
   }
 
-  // Use provided data or show empty state
-  const subscriptions = overview?.subscriptions ?? [];
-  const trials = activeTrials ?? [];
-  const zombies = zombieSubscriptions ?? [];
+  // Use provided data or fetched data
+  const subscriptions = overviewProp?.subscriptions ?? fetchedSubscriptions;
+  const trials = activeTrialsProp ?? fetchedTrials;
+  const zombies = zombiesProp ?? fetchedZombies;
 
   return (
     <div className="space-y-6">
@@ -349,10 +376,30 @@ export function SubscriptionsTab({
       </div>
 
       {/* Overview stats */}
-      {overview && <OverviewStats overview={overview} />}
+      {(overviewProp || subscriptions.length > 0) && (
+        <OverviewStats overview={overviewProp ?? {
+          totalSubscriptions: subscriptions.length,
+          totalMonthlyRecurring: subscriptions.reduce((sum, s) => sum + s.amount, 0),
+          totalAnnualRecurring: subscriptions.reduce((sum, s) => sum + s.amount * 12, 0),
+          activeCount: subscriptions.filter((s) => s.status === 'active-used' || s.status === 'active-unused').length,
+          zombieCount: zombies.length,
+          trialCount: trials.length,
+          priceIncreasedCount: subscriptions.filter((s) => s.status === 'price-increased').length,
+          renewingSoonCount: subscriptions.filter((s) => s.status === 'renewing-soon').length,
+          subscriptions,
+        }} />
+      )}
 
       {/* Zombie subscriptions — highlighted section */}
-      <ZombieSubscriptionsSection zombies={zombies} />
+      <ZombieSubscriptionsSection zombies={zombiesProp ?? fetchedZombies.map((sub) => ({
+        subscription: sub,
+        usageScore: sub.usageScore,
+        lastEngagementDate: sub.updatedAt,
+        daysSinceLastEngagement: Math.floor((Date.now() - new Date(sub.updatedAt).getTime()) / (1000 * 60 * 60 * 24)),
+        monthlyWaste: sub.amount,
+        annualWaste: sub.amount * 12,
+        recommendation: `Cancel ${sub.vendor} to save $${(sub.amount * 12).toFixed(2)}/year.`,
+      }))} />
 
       {/* Active trials with countdown */}
       <ActiveTrialsSection trials={trials} />

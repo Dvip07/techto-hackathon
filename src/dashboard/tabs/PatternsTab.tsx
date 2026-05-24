@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ActionButton } from '../components/ActionButton';
 import { AlertBadge } from '../components/AlertBadge';
 import type {
@@ -71,12 +71,76 @@ const demoRecurringTimeline: RecurringSpendSnapshot[] = [
 
 export function PatternsTab() {
   const [creepAcknowledged, setCreepAcknowledged] = useState(false);
+  const [monthlyTotals, setMonthlyTotals] = useState<MonthlySpend[]>(demoMonthlyTotals);
+  const [categoryBreakdown, setCategoryBreakdown] = useState<CategorySpend[]>(demoCategoryBreakdown);
+  const [recurringTimeline, setRecurringTimeline] = useState<RecurringSpendSnapshot[]>(demoRecurringTimeline);
+  const [mom, setMom] = useState<MoMComparison>(demoMoM);
+  const [creepAlert, setCreepAlert] = useState<CreepAlert | null>(demoCreepAlert);
+  const [loaded, setLoaded] = useState(false);
 
-  const monthlyTotals = demoMonthlyTotals;
-  const mom = demoMoM;
-  const categoryBreakdown = demoCategoryBreakdown;
-  const creepAlert = demoCreepAlert;
-  const recurringTimeline = demoRecurringTimeline;
+  const API_URL = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL)
+    || 'http://localhost:3001';
+
+  useEffect(() => {
+    Promise.all([
+      fetch(`${API_URL}/api/spend/monthly?months=6`).then((r) => r.ok ? r.json() : null),
+      fetch(`${API_URL}/api/spend/categories`).then((r) => r.ok ? r.json() : null),
+      fetch(`${API_URL}/api/spend/recurring`).then((r) => r.ok ? r.json() : null),
+    ])
+      .then(([monthly, categories, recurring]) => {
+        if (monthly && monthly.length > 0) {
+          setMonthlyTotals(monthly);
+          // Compute MoM from monthly data
+          if (monthly.length >= 2) {
+            const current = monthly[monthly.length - 1];
+            const previous = monthly[monthly.length - 2];
+            const change = current.totalAmount - previous.totalAmount;
+            const pctChange = previous.totalAmount > 0 ? (change / previous.totalAmount) * 100 : 0;
+            setMom({
+              currentMonth: current.totalAmount,
+              previousMonth: previous.totalAmount,
+              absoluteChange: change,
+              percentageChange: Math.round(pctChange * 100) / 100,
+              direction: change > 0 ? 'increasing' : change < 0 ? 'decreasing' : 'stable',
+            });
+          }
+        }
+        if (categories && categories.length > 0) {
+          setCategoryBreakdown(categories);
+        }
+        if (recurring && recurring.length > 0) {
+          setRecurringTimeline(recurring);
+          // Detect creep from recurring data
+          if (recurring.length >= 3) {
+            const oldest = recurring[0];
+            const newest = recurring[recurring.length - 1];
+            const increase = newest.totalMonthlyRecurring - oldest.totalMonthlyRecurring;
+            const pctIncrease = oldest.totalMonthlyRecurring > 0
+              ? (increase / oldest.totalMonthlyRecurring) * 100
+              : 0;
+            if (pctIncrease > 15) {
+              setCreepAlert({
+                id: `creep-${Date.now()}`,
+                detectedAt: new Date(),
+                periodMonths: recurring.length,
+                startingMonthlySpend: oldest.totalMonthlyRecurring,
+                currentMonthlySpend: newest.totalMonthlyRecurring,
+                absoluteIncrease: increase,
+                percentageIncrease: Math.round(pctIncrease * 10) / 10,
+                newSubscriptionsAdded: newest.newThisMonth ?? [],
+                priceIncreasesDetected: newest.priceChangesThisMonth ?? [],
+                insight: `Your monthly subscription spend has increased by ${Math.round(pctIncrease)}% over the last ${recurring.length} months, from $${oldest.totalMonthlyRecurring} to $${newest.totalMonthlyRecurring}.`,
+                acknowledged: false,
+              });
+            } else {
+              setCreepAlert(null);
+            }
+          }
+        }
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, [API_URL]);
 
   const maxMonthlyAmount = Math.max(...monthlyTotals.map((m) => m.totalAmount));
 

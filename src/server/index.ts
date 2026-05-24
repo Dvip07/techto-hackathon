@@ -65,10 +65,49 @@ app.get("/api/health", (_req, res) => {
 app.get("/api/priority-feed", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 20;
-    // For now return empty — will be wired to full pipeline
-    res.json([]);
+    if (lastPipelineResult?.priorityFeed) {
+      res.json(lastPipelineResult.priorityFeed.slice(0, limit));
+    } else {
+      res.json([]);
+    }
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch priority feed" });
+  }
+});
+
+// Digest
+app.get("/api/digest", async (_req, res) => {
+  try {
+    if (lastPipelineResult?.digest) {
+      res.json(lastPipelineResult.digest);
+    } else {
+      res.json(null);
+    }
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch digest" });
+  }
+});
+
+// Spend by Category
+app.get("/api/spend/categories", async (_req, res) => {
+  try {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const categories = await store.getSpendByCategory({ start, end });
+    res.json(categories);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch spend categories" });
+  }
+});
+
+// Recurring Spend Timeline
+app.get("/api/spend/recurring", async (_req, res) => {
+  try {
+    const snapshots = await store.getTotalRecurringSpend();
+    res.json(snapshots);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch recurring spend" });
   }
 });
 
@@ -246,12 +285,20 @@ app.post("/api/pipeline/run", async (_req, res) => {
       console.log(`✓ Pipeline completed in ${result.durationMs}ms — ${result.messagesFetched} messages fetched, ${result.messagesClassified} classified, ${result.entitiesPersisted} entities persisted`);
     } else {
       console.error(`✗ Pipeline failed: ${result.error}`);
+      // Invalidate runner on auth/token errors so it gets recreated next time
+      if (result.error && (result.error.includes("401") || result.error.includes("token") || result.error.includes("auth"))) {
+        pipelineRunner = null;
+      }
     }
 
     res.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Pipeline failed";
     console.error("✗ Pipeline error:", message);
+    // Invalidate runner on auth errors
+    if (message.includes("401") || message.includes("token") || message.includes("auth") || message.includes("Token refresh failed")) {
+      pipelineRunner = null;
+    }
     res.status(500).json({ error: message });
   } finally {
     pipelineRunning = false;

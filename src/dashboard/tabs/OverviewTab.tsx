@@ -343,8 +343,10 @@ function formatSpendChange(change: number): string {
 }
 
 function formatPercentChange(change: number, total: number): string {
-  if (total === 0) return '0%';
-  const pct = (change / total) * 100;
+  // Calculate % change relative to previous period (total - change)
+  const previousTotal = total - change;
+  if (previousTotal === 0) return change > 0 ? '+100%' : '0%';
+  const pct = (change / previousTotal) * 100;
   const sign = pct > 0 ? '+' : '';
   return `${sign}${pct.toFixed(1)}%`;
 }

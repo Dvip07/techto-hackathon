@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { TabBar, type TabItem } from './components/TabBar';
 import { DraftPreviewModal } from './components/DraftPreviewModal';
 import { GmailConnectScreen } from './components/GmailConnectScreen';
@@ -106,11 +106,34 @@ export function App({ api }: AppProps = {}) {
   const API_URL = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL)
     || 'http://localhost:3001';
 
+  const [pipelineStatus, setPipelineStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
+
   // Check Gmail connection status on mount
   useEffect(() => {
     fetch(`${API_URL}/auth/status`)
       .then((res) => res.json())
-      .then((data) => setGmailConnected(data.connected === true))
+      .then((data) => {
+        setGmailConnected(data.connected === true);
+        // If connected, check if pipeline has run; if not, trigger it
+        if (data.connected === true) {
+          fetch(`${API_URL}/api/pipeline/status`)
+            .then((r) => r.json())
+            .then((status) => {
+              if (!status.lastResult && !status.running) {
+                setPipelineStatus('running');
+                fetch(`${API_URL}/api/pipeline/run`, { method: 'POST' })
+                  .then((r) => r.json())
+                  .then((result) => setPipelineStatus(result.success ? 'done' : 'error'))
+                  .catch(() => setPipelineStatus('error'));
+              } else if (status.running) {
+                setPipelineStatus('running');
+              } else {
+                setPipelineStatus('done');
+              }
+            })
+            .catch(() => {});
+        }
+      })
       .catch(() => setGmailConnected(false));
   }, [API_URL]);
 
@@ -146,7 +169,15 @@ export function App({ api }: AppProps = {}) {
       <div className="min-h-screen bg-gray-50 p-6">
         <GmailConnectScreen
           apiUrl={API_URL}
-          onConnected={() => setGmailConnected(true)}
+          onConnected={() => {
+            setGmailConnected(true);
+            // Trigger pipeline to fetch and parse emails
+            setPipelineStatus('running');
+            fetch(`${API_URL}/api/pipeline/run`, { method: 'POST' })
+              .then((r) => r.json())
+              .then((result) => setPipelineStatus(result.success ? 'done' : 'error'))
+              .catch(() => setPipelineStatus('error'));
+          }}
         />
       </div>
     );
@@ -154,6 +185,13 @@ export function App({ api }: AppProps = {}) {
 
   return (
     <div className="flex h-screen overflow-hidden">
+      {/* Pipeline status banner */}
+      {pipelineStatus === 'running' && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-brand-600 text-white text-center text-sm py-2 px-4">
+          Scanning your inbox and analyzing emails with AI... This may take a minute.
+        </div>
+      )}
+
       {/* Sidebar navigation — desktop */}
       <aside className="hidden md:flex md:flex-col md:w-64 bg-white border-r border-gray-200">
         <div className="flex items-center gap-2 px-6 py-5 border-b border-gray-100">
@@ -225,41 +263,77 @@ export function App({ api }: AppProps = {}) {
 function TabContent({
   activeTab,
   onAction,
-  api,
 }: {
   activeTab: DashboardTab;
   onAction: (actionType: string, targetId: string) => Promise<void>;
   api?: DashboardAPI;
 }) {
+  const API_URL = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_URL)
+    || 'http://localhost:3001';
+
+  const getPriorityFeed = useCallback(
+    async (limit: number) => {
+      const res = await fetch(`${API_URL}/api/priority-feed?limit=${limit}`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    [API_URL]
+  );
+
+  const getSmartDigest = useCallback(
+    async (_period: 'daily' | 'weekly') => {
+      const res = await fetch(`${API_URL}/api/digest`);
+      if (!res.ok) {
+        return {
+          id: 'digest-empty',
+          period: 'daily' as const,
+          generatedAt: new Date(),
+          coveringRange: { start: new Date(), end: new Date() },
+          totalRecurringSpend: 0,
+          spendChangeFromLastPeriod: 0,
+          totalPotentialSavings: 0,
+          topAlerts: [],
+          renewalsThisPeriod: [],
+          expiringTrials: [],
+          overdueRefunds: [],
+          brokenPaymentPromises: [],
+          savingsOpportunities: [],
+          spendingInsight: '',
+          creepWarning: null,
+          oneClickActions: [],
+        };
+      }
+      const data = await res.json();
+      return data ?? {
+        id: 'digest-empty',
+        period: 'daily' as const,
+        generatedAt: new Date(),
+        coveringRange: { start: new Date(), end: new Date() },
+        totalRecurringSpend: 0,
+        spendChangeFromLastPeriod: 0,
+        totalPotentialSavings: 0,
+        topAlerts: [],
+        renewalsThisPeriod: [],
+        expiringTrials: [],
+        overdueRefunds: [],
+        brokenPaymentPromises: [],
+        savingsOpportunities: [],
+        spendingInsight: '',
+        creepWarning: null,
+        oneClickActions: [],
+      };
+    },
+    [API_URL]
+  );
+
+  const dismissItem = useCallback(async (_itemId: string) => {}, []);
+
   if (activeTab === 'overview') {
     return (
       <OverviewTab
-        getPriorityFeed={api
-          ? (limit) => api.getPriorityFeed(limit)
-          : async () => []}
-        getSmartDigest={api
-          ? (period) => api.getSmartDigest(period)
-          : async () => ({
-              id: 'digest-placeholder',
-              period: 'daily' as const,
-              generatedAt: new Date(),
-              coveringRange: { start: new Date(), end: new Date() },
-              totalRecurringSpend: 0,
-              spendChangeFromLastPeriod: 0,
-              totalPotentialSavings: 0,
-              topAlerts: [],
-              renewalsThisPeriod: [],
-              expiringTrials: [],
-              overdueRefunds: [],
-              brokenPaymentPromises: [],
-              savingsOpportunities: [],
-              spendingInsight: '',
-              creepWarning: null,
-              oneClickActions: [],
-            })}
-        dismissItem={api
-          ? (itemId) => api.dismissItem(itemId)
-          : async () => {}}
+        getPriorityFeed={getPriorityFeed}
+        getSmartDigest={getSmartDigest}
+        dismissItem={dismissItem}
         onAction={(actionType, targetId) => {
           onAction(actionType, targetId);
         }}
@@ -272,24 +346,16 @@ function TabContent({
       <div className="space-y-4">
         <h2 className="text-xl font-semibold text-gray-900">Savings — Recommendations, Optimizer & Negotiation</h2>
         <SavingsTab
-          getTotalPotentialSavings={api
-            ? () => api.getTotalPotentialSavings()
-            : async () => ({
-                totalPotentialMonthlySavings: 0,
-                totalPotentialAnnualSavings: 0,
-                recommendationCount: 0,
-                negotiationCount: 0,
-                billingOptimizationCount: 0,
-              })}
-          getSavingsRecommendations={api
-            ? () => api.getSavingsRecommendations()
-            : async () => []}
-          getBillingOptimizations={api
-            ? () => api.getBillingOptimizations()
-            : async () => []}
-          getNegotiationOpportunities={api
-            ? () => api.getNegotiationOpportunities()
-            : async () => []}
+          getTotalPotentialSavings={async () => ({
+            totalPotentialMonthlySavings: 0,
+            totalPotentialAnnualSavings: 0,
+            recommendationCount: 0,
+            negotiationCount: 0,
+            billingOptimizationCount: 0,
+          })}
+          getSavingsRecommendations={async () => []}
+          getBillingOptimizations={async () => []}
+          getNegotiationOpportunities={async () => []}
           onAction={(actionType, targetId) => {
             onAction(actionType, targetId);
           }}
@@ -331,16 +397,32 @@ function TabContent({
   if (activeTab === 'reminders') {
     return (
       <RemindersTab
-        getUpcomingRenewals={api
-          ? () => api.getUpcomingRenewals()
-          : async () => []}
-        getExpiringTrials={api
-          ? () => api.getExpiringTrials()
-          : async () => []}
+        getUpcomingRenewals={async () => {
+          const res = await fetch(`${API_URL}/api/subscriptions`);
+          if (!res.ok) return [];
+          const subs = await res.json();
+          return subs
+            .filter((s: any) => s.nextRenewalDate)
+            .map((s: any) => ({
+              id: s.id,
+              vendor: s.vendor,
+              amount: s.amount,
+              currency: s.currency,
+              renewalDate: s.nextRenewalDate,
+              daysUntilRenewal: Math.ceil((new Date(s.nextRenewalDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
+              autoRenews: s.autoRenews,
+              billingFrequency: s.billingFrequency,
+              cancellationUrl: null,
+              leadTimeAlerts: [30, 7, 1],
+            }));
+        }}
+        getExpiringTrials={async () => {
+          const res = await fetch(`${API_URL}/api/trials`);
+          if (!res.ok) return [];
+          return res.json();
+        }}
         getObligationDeadlines={async () => []}
-        configureLeadTime={api
-          ? (vendor, days) => api.configureLeadTime(vendor, days)
-          : async () => {}}
+        configureLeadTime={async () => {}}
         onRequestDraft={(type, targetId) => {
           onAction(type === 'trial_cancellation' ? 'cancel_trial' : type, targetId);
         }}
@@ -348,22 +430,5 @@ function TabContent({
     );
   }
 
-  const tabLabels: Record<DashboardTab, string> = {
-    overview: 'Overview — Priority Feed & Digest',
-    subscriptions: 'Subscriptions — Scanner, Usage & Trials',
-    savings: 'Savings — Recommendations, Optimizer & Negotiation',
-    reminders: 'Reminders — Renewals, Deadlines & Trial Expiries',
-    patterns: 'Patterns — Trends & Creep Alerts',
-    commitments: 'Commitments — Promises & Refunds',
-    obligations: 'Obligations — Contracts & Risk',
-  };
-
-  return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-semibold text-gray-900">{tabLabels[activeTab]}</h2>
-      <p className="text-sm text-gray-500">
-        Content for this tab will be implemented in subsequent tasks.
-      </p>
-    </div>
-  );
+  return null;
 }

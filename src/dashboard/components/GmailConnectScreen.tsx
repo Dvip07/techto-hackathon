@@ -28,9 +28,14 @@ export function GmailConnectScreen({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Stable ref for onConnected to avoid re-render loops
+  const onConnectedRef = React.useRef(onConnected);
+  onConnectedRef.current = onConnected;
+
   // Check auth status on mount and periodically
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
+    let calledOnConnected = false;
 
     async function checkStatus() {
       try {
@@ -38,8 +43,9 @@ export function GmailConnectScreen({
         if (res.ok) {
           const data: AuthStatus = await res.json();
           setStatus(data);
-          if (data.connected && !data.expired) {
-            onConnected?.();
+          if (data.connected && !data.expired && !calledOnConnected) {
+            calledOnConnected = true;
+            onConnectedRef.current?.();
           }
         }
       } catch {
@@ -54,7 +60,7 @@ export function GmailConnectScreen({
     interval = setInterval(checkStatus, 3000);
 
     return () => clearInterval(interval);
-  }, [apiUrl, onConnected]);
+  }, [apiUrl]);
 
   const handleConnect = () => {
     // Open OAuth flow in the same window
